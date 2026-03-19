@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -17,111 +17,100 @@ export default function IntegratedChat({ user }) {
   const messagesContainerRef = useRef(null);
   const mobileMessagesContainerRef = useRef(null);
 
-  // Load conversations and messages
   useEffect(() => {
-    if (!user?.email) return;
+    if (!user?.id) return;
     loadConversations();
-  }, [user?.email]);
+  }, [user?.id]);
 
   const loadConversations = async () => {
     try {
       setLoading(true);
-      const contactMap = {};
 
-      // Get all messages involving this user
-      const sentMessages = await base44.entities.Messages.filter({ sender_email: user.email });
-      const receivedMessages = await base44.entities.Messages.filter({ recipient_email: user.email });
-      const allMessages = [...sentMessages, ...receivedMessages];
+      const contactIds = new Set();
 
-      // Build conversation map from messages
-      allMessages.forEach(msg => {
-        const otherEmail = msg.sender_email === user.email ? msg.recipient_email : msg.sender_email;
-        const otherName = msg.sender_email === user.email ? msg.recipient_name : msg.sender_name;
-        
-        if (!contactMap[otherEmail]) {
-          contactMap[otherEmail] = {
-            email: otherEmail,
-            name: otherName || otherEmail,
-            lastMessage: msg.content,
-            lastMessageTime: msg.created_date,
-            unreadCount: 0,
-          };
-        }
-        
-        // Count unread messages from this contact
-        if (msg.recipient_email === user.email && !msg.is_read) {
-          contactMap[otherEmail].unreadCount += 1;
-        }
-        
-        // Update last message
-        if (new Date(msg.created_date) > new Date(contactMap[otherEmail].lastMessageTime)) {
-          contactMap[otherEmail].lastMessage = msg.content;
-          contactMap[otherEmail].lastMessageTime = msg.created_date;
-        }
+      const { data: convs } = await supabase
+        .from("conversations")
+        .select("id, participant_1_id, participant_2_id")
+        .or(`participant_1_id.eq.${user.id},participant_2_id.eq.${user.id}`);
+
+      (convs || []).forEach((c) => {
+        contactIds.add(c.participant_1_id === user.id ? c.participant_2_id : c.participant_1_id);
       });
 
-      // ── For STUDENTS: find booked teachers via availability_id ──
-      const studentBookings = await base44.entities.Booking.filter({ student_email: user.email });
-      if (studentBookings.length > 0) {
-        const availabilityIds = [...new Set(studentBookings.map(b => b.availability_id).filter(Boolean))];
-        for (const avId of availabilityIds) {
-          const slots = await base44.entities.AvailabilitySlots.filter({ id: avId });
-          if (slots.length > 0) {
-            const teacherEmail = slots[0].teacher_email;
-            if (teacherEmail && !contactMap[teacherEmail]) {
-              const teachers = await base44.entities.TeacherProfile.filter({ user_email: teacherEmail });
-              if (teachers.length > 0) {
-                contactMap[teacherEmail] = {
-                  email: teacherEmail,
-                  name: teachers[0].full_name,
-                  lastMessage: "No messages yet — say hello!",
-                  lastMessageTime: new Date(0).toISOString(),
-                  unreadCount: 0,
-                };
-              }
-            }
-          }
-        }
+      const { data: studentBookings } = await supabase
+        .from("bookings")
+        .select("teacher_id")
+        .eq("student_id", user.id);
+      (studentBookings || []).forEach((b) => contactIds.add(b.teacher_id));
+
+      const { data: teacherProfile } = await supabase
+        .from("teacher_profiles")
+        .select("id")
+        .eq("profile_id", user.id)
+        .single();
+      if (teacherProfile) {
+        const { data: teacherBookings } = await supabase
+          .from("bookings")
+          .select("student_id")
+          .eq("teacher_id", user.id);
+        (teacherBookings || []).forEach((b) => contactIds.add(b.student_id));
       }
 
-      // ── For TEACHERS: find students who booked their availability slots ──
-      const teacherProfile = await base44.entities.TeacherProfile.filter({ user_email: user.email });
-      if (teacherProfile.length > 0) {
-        const mySlots = await base44.entities.AvailabilitySlots.filter({ teacher_email: user.email });
-        const mySlotIds = new Set(mySlots.map(s => s.id));
-        const allBookings = await base44.entities.Booking.list();
-        const teacherBookings = allBookings.filter(b => mySlotIds.has(b.availability_id));
-        const studentEmails = [...new Set(teacherBookings.map(b => b.student_email).filter(Boolean))];
-        for (const studentEmail of studentEmails) {
-          if (!contactMap[studentEmail]) {
-            const students = await base44.entities.StudentProfile.filter({ user_email: studentEmail });
-            if (students.length > 0) {
-              contactMap[studentEmail] = {
-                email: studentEmail,
-                name: students[0].full_name,
-                lastMessage: "No messages yet",
-                lastMessageTime: new Date(0).toISOString(),
-                unreadCount: 0,
-              };
-            } else {
-              // Fallback to booking student_name
-              const booking = teacherBookings.find(b => b.student_email === studentEmail);
-              contactMap[studentEmail] = {
-                email: studentEmail,
-                name: booking?.student_name || studentEmail,
-                lastMessage: "No messages yet",
-                lastMessageTime: new Date(0).toISOString(),
-                unreadCount: 0,
-              };
-            }
-          }
-        }
+      contactIds.delete(user.id);
+      const otherIds = [...contactIds];
+
+      if (otherIds.length === 0) {
+        setConversations([]);
+        setLoading(false);
+        return;
       }
 
-      const contactList = Object.values(contactMap).sort((a, b) => 
-        new Date(b.lastMessageTime) - new Date(a.lastMessageTime)
-      );
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, email, full_name")
+        .in("id", otherIds);
 
+      const profileMap = {};
+      (profiles || []).forEach((p) => { profileMap[p.id] = p; });
+
+      const contactList = [];
+      for (const otherId of otherIds) {
+        const { data: convId } = await supabase.rpc("get_or_create_conversation", {
+          p_user_1_id: user.id,
+          p_user_2_id: otherId,
+        });
+        if (!convId) continue;
+
+        const conv = convs?.find((c) => c.id === convId) || { id: convId };
+        const p = profileMap[otherId];
+
+        const { data: lastMsgs } = await supabase
+          .from("messages")
+          .select("content, created_at")
+          .eq("conversation_id", convId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        const { count: unreadCount } = await supabase
+          .from("messages")
+          .select("id", { count: "exact", head: true })
+          .eq("conversation_id", convId)
+          .eq("is_read", false)
+          .neq("sender_id", user.id);
+
+        contactList.push({
+          id: otherId,
+          email: p?.email || "",
+          name: p?.full_name || p?.email || "Unknown",
+          lastMessage: lastMsgs?.content || "No messages yet",
+          lastMessageTime: lastMsgs?.created_at || new Date(0).toISOString(),
+          unreadCount: unreadCount ?? 0,
+          conversationId: convId,
+        });
+      }
+
+      contactList.sort((a, b) => new Date(b.lastMessageTime) - new Date(a.lastMessageTime));
       setConversations(contactList);
       if (contactList.length > 0 && !selectedContact) {
         setSelectedContact(contactList[0]);
@@ -133,70 +122,58 @@ export default function IntegratedChat({ user }) {
     }
   };
 
-  // Load messages for selected contact
   useEffect(() => {
-    if (!selectedContact?.email || !user?.email) return;
+    if (!selectedContact?.id || !user?.id) return;
     loadMessages();
-  }, [selectedContact?.email, user?.email]);
+  }, [selectedContact?.id, user?.id]);
 
   const loadMessages = async () => {
+    if (!selectedContact?.conversationId) return;
     try {
-      const sentMsgs = await base44.entities.Messages.filter({ 
-        sender_email: user.email, 
-        recipient_email: selectedContact.email 
-      }, "-created_date");
-      
-      const receivedMsgs = await base44.entities.Messages.filter({ 
-        sender_email: selectedContact.email,
-        recipient_email: user.email 
-      }, "-created_date");
+      const { data: msgs } = await supabase
+        .from("messages")
+        .select("id, sender_id, content, is_read, created_at")
+        .eq("conversation_id", selectedContact.conversationId)
+        .order("created_at", { ascending: true });
 
-      const allMsgs = [...sentMsgs, ...receivedMsgs].sort((a, b) => 
-        new Date(a.created_date) - new Date(b.created_date)
-      );
+      setMessages(msgs || []);
 
-      setMessages(allMsgs);
-
-      // Mark received messages as read
-      receivedMsgs.forEach(msg => {
-        if (!msg.is_read) {
-          base44.entities.Messages.update(msg.id, { is_read: true });
-        }
-      });
+      await supabase
+        .from("messages")
+        .update({ is_read: true })
+        .eq("conversation_id", selectedContact.conversationId)
+        .neq("sender_id", user.id)
+        .eq("is_read", false);
     } catch (error) {
       console.error("Error loading messages:", error);
     }
   };
 
   const handleSendMessage = async () => {
-    if (!messageText.trim() || !selectedContact?.email) return;
+    if (!messageText.trim() || !selectedContact?.conversationId) return;
 
     const content = messageText.trim();
     setMessageText("");
 
-    // Optimistically append the message immediately
     const optimisticMsg = {
       id: `optimistic-${Date.now()}`,
-      sender_email: user.email,
-      sender_name: user.full_name,
-      recipient_email: selectedContact.email,
-      recipient_name: selectedContact.name,
+      sender_id: user.id,
       content,
       is_read: false,
-      created_date: new Date().toISOString(),
+      created_at: new Date().toISOString(),
     };
-    setMessages(prev => [...prev, optimisticMsg]);
+    setMessages((prev) => [...prev, optimisticMsg]);
 
     setSending(true);
     try {
-      await base44.functions.invoke('sendPrivateMessage', {
-        recipientEmail: selectedContact.email,
+      const { error } = await supabase.from("messages").insert({
+        conversation_id: selectedContact.conversationId,
+        sender_id: user.id,
         content,
       });
-      // The real message will arrive via subscription and deduplicate by id
+      if (error) throw error;
     } catch (error) {
-      // Roll back on failure
-      setMessages(prev => prev.filter(m => m.id !== optimisticMsg.id));
+      setMessages((prev) => prev.filter((m) => m.id !== optimisticMsg.id));
       setMessageText(content);
       console.error("Error sending message:", error);
     } finally {
@@ -204,76 +181,44 @@ export default function IntegratedChat({ user }) {
     }
   };
 
-  // Keep refs to latest values so the subscription always sees current state
-  const selectedContactRef = useRef(selectedContact);
-  useEffect(() => { selectedContactRef.current = selectedContact; }, [selectedContact]);
-
-  const userRef = useRef(user);
-  useEffect(() => { userRef.current = user; }, [user]);
-
-  // Subscribe to new messages — mounted once, never re-subscribes
   useEffect(() => {
-    const unsubscribe = base44.entities.Messages.subscribe((event) => {
-      if (event.type === "create") {
-        const msg = event.data;
-        const currentUser = userRef.current;
-        const currentContact = selectedContactRef.current;
-        const isRelevant = msg.sender_email === currentUser?.email || msg.recipient_email === currentUser?.email;
-
-        if (!isRelevant) return;
-
-        const otherEmail = msg.sender_email === currentUser?.email ? msg.recipient_email : msg.sender_email;
-        const otherName = msg.sender_email === currentUser?.email ? msg.recipient_name : msg.sender_name;
-
-        // Append message to current conversation if it's open
-        if (currentContact?.email === otherEmail) {
-          setMessages(prev => {
-            if (prev.find(m => m.id === msg.id)) return prev;
-            // Replace optimistic message if this is from the current user (sender)
-            const withoutOptimistic = msg.sender_email === currentUser?.email
-              ? prev.filter(m => !m.id?.toString().startsWith('optimistic-'))
-              : prev;
-            return [...withoutOptimistic, msg].sort((a, b) => new Date(a.created_date) - new Date(b.created_date));
-          });
-          if (msg.recipient_email === currentUser?.email && !msg.is_read) {
-            base44.entities.Messages.update(msg.id, { is_read: true });
+    if (!user?.id) return;
+    const channel = supabase
+      .channel("messages")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
+        },
+        (payload) => {
+          const msg = payload.new;
+          const conv = conversations.find((c) => c.conversationId === msg.conversation_id);
+          if (conv && (conv.id === selectedContact?.id || msg.sender_id !== user.id)) {
+            setMessages((prev) => {
+              if (prev.find((m) => m.id === msg.id)) return prev;
+              const withoutOptimistic = msg.sender_id === user.id
+                ? prev.filter((m) => !String(m.id).startsWith("optimistic-"))
+                : prev;
+              return [...withoutOptimistic, msg].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+            });
           }
         }
+      )
+      .subscribe();
 
-        // Update conversation list metadata only (no full reload)
-        setConversations(prev => {
-          const existing = prev.find(c => c.email === otherEmail);
-          if (existing) {
-            return prev.map(c => c.email === otherEmail
-              ? { ...c, lastMessage: msg.content, lastMessageTime: msg.created_date, unreadCount: (currentContact?.email === otherEmail ? 0 : (c.unreadCount || 0) + (msg.recipient_email === currentUser?.email ? 1 : 0)) }
-              : c
-            ).sort((a, b) => new Date(b.lastMessageTime) - new Date(a.lastMessageTime));
-          }
-          // New contact appeared
-          return [{ email: otherEmail, name: otherName || otherEmail, lastMessage: msg.content, lastMessageTime: msg.created_date, unreadCount: msg.recipient_email === currentUser?.email ? 1 : 0 }, ...prev];
-        });
-      }
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  // Scroll to bottom on new messages
-  const scrollToBottom = (behavior = "smooth") => {
-    if (messagesContainerRef.current) {
-      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
-    }
-    if (mobileMessagesContainerRef.current) {
-      mobileMessagesContainerRef.current.scrollTop = mobileMessagesContainerRef.current.scrollHeight;
-    }
-  };
+    return () => { supabase.removeChannel(channel); };
+  }, [user?.id, conversations, selectedContact?.id]);
 
   useEffect(() => {
-    // Instant scroll when switching conversations, smooth on new messages
     const behavior = messages.length > 0 ? "smooth" : "instant";
-    const timer = setTimeout(() => scrollToBottom(behavior), 50);
+    const timer = setTimeout(() => {
+      if (messagesContainerRef.current) messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+      if (mobileMessagesContainerRef.current) mobileMessagesContainerRef.current.scrollTop = mobileMessagesContainerRef.current.scrollHeight;
+    }, 50);
     return () => clearTimeout(timer);
-  }, [messages, selectedContact?.email]);
+  }, [messages, selectedContact?.id]);
 
   if (loading) {
     return (
@@ -285,13 +230,11 @@ export default function IntegratedChat({ user }) {
 
   return (
     <div className="flex gap-4 h-[600px] md:h-[700px]">
-      {/* Contacts Sidebar */}
       <Card className="w-full md:w-80 flex flex-col border-0 shadow-sm">
         <div className="p-4 border-b border-gray-100">
           <h2 className="text-lg font-bold text-[#1a1b4b]">Messages</h2>
           <p className="text-xs text-gray-400 mt-1">{conversations.length} conversation{conversations.length !== 1 ? "s" : ""}</p>
         </div>
-
         <div className="flex-1 overflow-y-auto">
           {conversations.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center p-4">
@@ -301,13 +244,13 @@ export default function IntegratedChat({ user }) {
             </div>
           ) : (
             <div className="space-y-1 p-2">
-              {conversations.map(contact => (
+              {conversations.map((contact) => (
                 <button
-                  key={contact.email}
+                  key={contact.id}
                   onClick={() => setSelectedContact(contact)}
                   className={cn(
                     "w-full p-3 rounded-lg text-left transition-all",
-                    selectedContact?.email === contact.email
+                    selectedContact?.id === contact.id
                       ? "bg-[#1a1b4b]/10 border border-[#1a1b4b]/20"
                       : "hover:bg-gray-50 border border-transparent"
                   )}
@@ -333,45 +276,30 @@ export default function IntegratedChat({ user }) {
         </div>
       </Card>
 
-      {/* Chat Pane */}
       <Card className="flex-1 hidden md:flex flex-col border-0 shadow-sm">
         {selectedContact ? (
           <>
-            {/* Header */}
             <div className="p-4 border-b border-gray-100">
               <p className="text-sm font-semibold text-[#1a1b4b]">{selectedContact.name}</p>
               <p className="text-xs text-gray-400">{selectedContact.email}</p>
             </div>
-
-            {/* Messages */}
             <CardContent ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3">
               {messages.length === 0 ? (
                 <div className="flex items-center justify-center h-full text-center">
                   <p className="text-sm text-gray-400">No messages yet. Start the conversation!</p>
                 </div>
               ) : (
-                messages.map(msg => (
-                  <div
-                    key={msg.id}
-                    className={cn(
-                      "flex",
-                      msg.sender_email === user.email ? "justify-end" : "justify-start"
-                    )}
-                  >
+                messages.map((msg) => (
+                  <div key={msg.id} className={cn("flex", msg.sender_id === user.id ? "justify-end" : "justify-start")}>
                     <div
                       className={cn(
                         "max-w-xs px-4 py-2 rounded-lg text-sm",
-                        msg.sender_email === user.email
-                          ? "bg-[#1a1b4b] text-white rounded-br-none"
-                          : "bg-gray-100 text-[#1a1b4b] rounded-bl-none"
+                        msg.sender_id === user.id ? "bg-[#1a1b4b] text-white rounded-br-none" : "bg-gray-100 text-[#1a1b4b] rounded-bl-none"
                       )}
                     >
                       <p className="break-words">{msg.content}</p>
-                      <p className={cn(
-                        "text-xs mt-1",
-                        msg.sender_email === user.email ? "text-white/70" : "text-gray-500"
-                      )}>
-                        {new Date(msg.created_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      <p className={cn("text-xs mt-1", msg.sender_id === user.id ? "text-white/70" : "text-gray-500")}>
+                        {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </p>
                     </div>
                   </div>
@@ -379,23 +307,17 @@ export default function IntegratedChat({ user }) {
               )}
               <div ref={messagesEndRef} />
             </CardContent>
-
-            {/* Input */}
             <div className="p-4 border-t border-gray-100">
               <div className="flex gap-2">
                 <Input
                   placeholder="Type a message..."
                   value={messageText}
-                  onChange={e => setMessageText(e.target.value)}
-                  onKeyPress={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSendMessage())}
+                  onChange={(e) => setMessageText(e.target.value)}
+                  onKeyPress={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), handleSendMessage())}
                   disabled={sending}
                   className="text-sm"
                 />
-                <Button
-                  onClick={handleSendMessage}
-                  disabled={sending || !messageText.trim()}
-                  className="bg-[#1a1b4b] hover:bg-[#2a2b5b] px-4"
-                >
+                <Button onClick={handleSendMessage} disabled={sending || !messageText.trim()} className="bg-[#1a1b4b] hover:bg-[#2a2b5b] px-4">
                   <Send className="w-4 h-4" />
                 </Button>
               </div>
@@ -408,65 +330,42 @@ export default function IntegratedChat({ user }) {
         )}
       </Card>
 
-      {/* Mobile message view */}
       {selectedContact && (
         <Card className="flex-1 md:hidden flex flex-col border-0 shadow-sm">
-          {/* Header */}
           <div className="p-4 border-b border-gray-100">
-            <button onClick={() => setSelectedContact(null)} className="text-sm text-[#1a1b4b] font-semibold mb-1">
-              ← Back
-            </button>
+            <button onClick={() => setSelectedContact(null)} className="text-sm text-[#1a1b4b] font-semibold mb-1">← Back</button>
             <p className="text-sm font-semibold text-[#1a1b4b]">{selectedContact.name}</p>
             <p className="text-xs text-gray-400">{selectedContact.email}</p>
           </div>
-
-          {/* Messages */}
           <CardContent ref={mobileMessagesContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3">
-            {messages.map(msg => (
-              <div
-                key={msg.id}
-                className={cn(
-                  "flex",
-                  msg.sender_email === user.email ? "justify-end" : "justify-start"
-                )}
-              >
+            {messages.map((msg) => (
+              <div key={msg.id} className={cn("flex", msg.sender_id === user.id ? "justify-end" : "justify-start")}>
                 <div
                   className={cn(
                     "max-w-xs px-4 py-2 rounded-lg text-sm",
-                    msg.sender_email === user.email
-                      ? "bg-[#1a1b4b] text-white rounded-br-none"
-                      : "bg-gray-100 text-[#1a1b4b] rounded-bl-none"
+                    msg.sender_id === user.id ? "bg-[#1a1b4b] text-white rounded-br-none" : "bg-gray-100 text-[#1a1b4b] rounded-bl-none"
                   )}
                 >
                   <p className="break-words">{msg.content}</p>
-                  <p className={cn(
-                    "text-xs mt-1",
-                    msg.sender_email === user.email ? "text-white/70" : "text-gray-500"
-                  )}>
-                    {new Date(msg.created_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  <p className={cn("text-xs mt-1", msg.sender_id === user.id ? "text-white/70" : "text-gray-500")}>
+                    {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   </p>
                 </div>
               </div>
             ))}
             <div ref={messagesEndRef} />
           </CardContent>
-
-          {/* Input */}
           <div className="p-4 border-t border-gray-100">
             <div className="flex gap-2">
               <Input
                 placeholder="Type a message..."
                 value={messageText}
-                onChange={e => setMessageText(e.target.value)}
-                onKeyPress={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSendMessage())}
+                onChange={(e) => setMessageText(e.target.value)}
+                onKeyPress={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), handleSendMessage())}
                 disabled={sending}
                 className="text-sm"
               />
-              <Button
-                onClick={handleSendMessage}
-                disabled={sending || !messageText.trim()}
-                className="bg-[#1a1b4b] hover:bg-[#2a2b5b] px-4"
-              >
+              <Button onClick={handleSendMessage} disabled={sending || !messageText.trim()} className="bg-[#1a1b4b] hover:bg-[#2a2b5b] px-4">
                 <Send className="w-4 h-4" />
               </Button>
             </div>

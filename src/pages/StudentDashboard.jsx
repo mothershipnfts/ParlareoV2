@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/AuthContext";
+import { createPageUrl } from "@/utils";
 import DashboardLayout from "@/components/DashboardLayout";
 import StudentProfileTab from "@/components/student/StudentProfileTab";
 import StudentBrowseTutorsTab from "@/components/student/StudentBrowseTutorsTab";
@@ -39,30 +41,44 @@ export default function StudentDashboard() {
   const [activeTab, setActiveTab] = useState(urlParams.get("tab") || "lessons");
   const [autoOpenTeacherId, setAutoOpenTeacherId] = useState(urlTeacherId || null);
 
-  useEffect(() => { loadData(); }, []);
+
+  const { user: authUser } = useAuth();
 
   const loadData = async () => {
     try {
-      const me = await base44.auth.me();
-      setUser(me);
-      const profiles = await base44.entities.StudentProfile.filter({ user_email: me.email });
-      if (profiles.length === 0) {
+      if (!authUser?.id) return;
+      setUser(authUser);
+
+      const { data: studentProfile } = await supabase
+        .from("student_profiles")
+        .select("*")
+        .eq("profile_id", authUser.id)
+        .single();
+
+      if (!studentProfile) {
         navigate(createPageUrl("PlacementTest"), { replace: true });
         return;
       }
-      setProfile(profiles[0]);
-      const allBookings = await base44.entities.Booking.filter({ student_email: me.email }, "-date");
-      setBookings(allBookings);
+      setProfile({ ...studentProfile, full_name: authUser.full_name });
 
-      // Belt-and-suspenders: verify and credit wallet if coming back from Stripe payment
+      const { data: allBookings } = await supabase
+        .from("bookings")
+        .select("*")
+        .eq("student_id", authUser.id)
+        .order("date", { ascending: false });
+      setBookings(allBookings || []);
+
       const params = new URLSearchParams(window.location.search);
       const paymentId = params.get("payment_id");
       if (params.get("payment") === "success" && paymentId) {
         try {
-          await base44.functions.invoke("verifyAndCreditWallet", { payment_id: paymentId });
-          console.log("verifyAndCreditWallet called for payment:", paymentId);
+          await fetch("/api/verifyAndCreditWallet", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ payment_id: paymentId }),
+          });
         } catch (e) {
-          console.warn("verifyAndCreditWallet failed (webhook may have handled it):", e.message);
+          console.warn("verifyAndCreditWallet failed:", e.message);
         }
       }
     } catch (e) {
@@ -70,6 +86,8 @@ export default function StudentDashboard() {
     }
     setLoading(false);
   };
+
+  useEffect(() => { loadData(); }, [authUser?.id]);
 
   if (loading) {
     return (

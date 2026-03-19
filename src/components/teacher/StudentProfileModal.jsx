@@ -1,33 +1,36 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { X, MessageSquare, Send, BookOpen, Clock, AlertCircle } from "lucide-react";
 
-export default function StudentProfileModal({ student, onClose, teacherEmail }) {
+export default function StudentProfileModal({ student, onClose, teacherId }) {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState(null);
 
   const handleSendMessage = async () => {
-    if (!message.trim() || !student?.email) return;
+    if (!message.trim() || !student?.id || !teacherId) return;
     
     setSending(true);
     setError(null);
     
     try {
-      // Create message record if entity exists
-      await base44.entities.StudentMessage?.create?.({
-        student_email: student.email,
-        student_name: student.name,
-        teacher_email: teacherEmail,
-        message: message.trim(),
-        is_read: false,
-      }).catch(() => null);
-      
+      const { data: convId } = await supabase.rpc("get_or_create_conversation", {
+        p_user_1_id: student.id,
+        p_user_2_id: teacherId,
+      });
+      if (convId) {
+        const { data: { user } } = await supabase.auth.getUser();
+        await supabase.from("messages").insert({
+          conversation_id: convId,
+          sender_id: user.id,
+          content: message.trim(),
+        });
+      }
       setSent(true);
       setMessage("");
       setTimeout(() => setSent(false), 2000);

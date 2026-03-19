@@ -53,6 +53,7 @@ import BrowseTeachers from './pages/BrowseTeachers';
 import BuyLessonPackage from './pages/BuyLessonPackage';
 import Home from './pages/Home';
 import LessonRoom from './pages/LessonRoom';
+import Login from './pages/Login';
 import LessonStore from './pages/LessonStore';
 import ManageSchedule from './pages/ManageSchedule';
 import MyLessons from './pages/MyLessons';
@@ -70,6 +71,7 @@ import TeacherProfileEdit from './pages/TeacherProfileEdit';
 import TeacherRejected from './pages/TeacherRejected';
 import TeacherSignup from './pages/TeacherSignup';
 import TeacherWallet from './pages/TeacherWallet';
+import SignUp from './pages/SignUp';
 import __Layout from './Layout.jsx';
 
 
@@ -80,6 +82,7 @@ export const PAGES = {
     "BuyLessonPackage": BuyLessonPackage,
     "Home": Home,
     "LessonRoom": LessonRoom,
+    "Login": Login,
     "LessonStore": LessonStore,
     "ManageSchedule": ManageSchedule,
     "MyLessons": MyLessons,
@@ -97,6 +100,7 @@ export const PAGES = {
     "TeacherRejected": TeacherRejected,
     "TeacherSignup": TeacherSignup,
     "TeacherWallet": TeacherWallet,
+    "SignUp": SignUp,
 }
 
 export const pagesConfig = {

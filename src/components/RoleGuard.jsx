@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
+import { useAuth } from "@/lib/AuthContext";
 import { createPageUrl } from "@/utils";
 import { Loader2 } from "lucide-react";
 
@@ -57,16 +57,16 @@ export default function RoleGuard({ allowedRoles, children }) {
   const navigate = useNavigate();
   const [ok, setOk] = useState(false);
 
+  const { user: me, isAuthenticated, navigateToLogin } = useAuth();
+
   useEffect(() => {
     (async () => {
       try {
-        const isAuth = await base44.auth.isAuthenticated();
-        if (!isAuth) {
-          base44.auth.redirectToLogin(window.location.href);
+        if (!isAuthenticated || !me) {
+          navigateToLogin(window.location.href);
           return;
         }
 
-        const me = await base44.auth.me();
         const role = me.role || "student";
         const teacherStatus = me.teacher_status;
         const assessmentCompleted = me.english_level_assessment_completed || false;
@@ -157,7 +157,7 @@ export default function RoleGuard({ allowedRoles, children }) {
         setOk(true);
       }
     })();
-  }, [navigate]);
+  }, [navigate, isAuthenticated, me, navigateToLogin]);
 
   if (!ok) {
     return (

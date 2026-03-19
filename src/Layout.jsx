@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
+import { useAuth } from "@/lib/AuthContext";
 import { createPageUrl } from "@/utils";
 import {
   Home, BookOpen, Calendar, GraduationCap, Video,
@@ -28,20 +28,9 @@ const TEACHER_STATUS_HOME = {
 };
 
 export default function Layout({ children, currentPageName }) {
-  const [user, setUser] = useState(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const { user, logout, navigateToLogin } = useAuth();
+  const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const navigate = useNavigate();
-
-  useEffect(() => { loadUser(); }, []);
-
-  const loadUser = async () => {
-    try {
-      const isAuth = await base44.auth.isAuthenticated();
-      if (isAuth) setUser(await base44.auth.me());
-    } catch (e) {}
-    setLoading(false);
-  };
 
   const role = user?.role || "student";
   const isAdmin = role === "admin";
@@ -132,7 +121,7 @@ export default function Layout({ children, currentPageName }) {
           {!isLoggedIn ? (
             <>
               <p className="text-xs text-white/30 uppercase tracking-widest px-4 py-2 mt-1">Get Started</p>
-              <button onClick={() => base44.auth.redirectToLogin(createPageUrl("StudentDashboard"))}
+              <button onClick={() => navigateToLogin(createPageUrl("StudentDashboard"))}
                 className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium w-full text-white/60 hover:text-white hover:bg-white/5 transition-all">
                 <User className="w-4 h-4" /> Sign In
               </button>
@@ -170,13 +159,13 @@ export default function Layout({ children, currentPageName }) {
                   <p className="text-xs text-white/40 truncate capitalize">{roleLabel}</p>
                 </div>
               </div>
-              <button onClick={() => base44.auth.logout(createPageUrl("Home"))}
+              <button onClick={() => logout(createPageUrl("Home"))}
                 className="flex items-center gap-3 px-4 py-2 rounded-xl text-sm text-white/50 hover:text-white hover:bg-white/5 w-full transition-all">
                 <LogOut className="w-4 h-4" /> Sign Out
               </button>
             </>
           ) : (
-            <button onClick={() => base44.auth.redirectToLogin(createPageUrl("StudentDashboard"))}
+            <button onClick={() => navigateToLogin(createPageUrl("StudentDashboard"))}
               className="flex items-center justify-center gap-2 w-full px-4 py-2.5 rounded-xl text-sm font-medium bg-[#f97066] hover:bg-[#e8605a] text-white transition-all">
               <User className="w-4 h-4" /> Sign In
             </button>

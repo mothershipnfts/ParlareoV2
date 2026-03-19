@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/AuthContext";
 import { createPageUrl } from "@/utils";
 import RoleGuard from "@/components/RoleGuard";
 import { GraduationCap, ChevronRight, ChevronLeft, CheckCircle2, Loader2 } from "lucide-react";
@@ -38,24 +39,28 @@ export default function PlacementTest() {
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState(null);
 
-  useEffect(() => {
-    checkExistingProfile();
-  }, []);
+  const { user: me, isAuthenticated, navigateToLogin } = useAuth();
 
   const checkExistingProfile = async () => {
-    const isAuth = await base44.auth.isAuthenticated();
-    if (!isAuth) {
-      base44.auth.redirectToLogin(createPageUrl("PlacementTest"));
+    if (!isAuthenticated || !me) {
+      navigateToLogin(createPageUrl("PlacementTest"));
       return;
     }
-    const me = await base44.auth.me();
-    const profiles = await base44.entities.StudentProfile.filter({ user_email: me.email });
-    if (profiles.length > 0) {
+    const { data: profile } = await supabase
+      .from("student_profiles")
+      .select("profile_id")
+      .eq("profile_id", me.id)
+      .single();
+    if (profile) {
       navigate(createPageUrl("StudentDashboard"));
     } else {
-      setProfileData(prev => ({ ...prev, full_name: me.full_name || "" }));
+      setProfileData((prev) => ({ ...prev, full_name: me.full_name || "" }));
     }
   };
+
+  useEffect(() => {
+    checkExistingProfile();
+  }, [isAuthenticated, me?.id]);
 
   const handleAnswer = (answerIdx) => {
     const newAnswers = [...answers, answerIdx];
@@ -89,36 +94,47 @@ export default function PlacementTest() {
   };
 
   const saveProfile = async () => {
+    if (!me?.id) return;
     setSaving(true);
-    const me = await base44.auth.me();
 
     try {
-      // Create student profile
-      await base44.entities.StudentProfile.create({
-        user_email: me.email,
+      const { data: existing } = await supabase
+        .from("student_profiles")
+        .select("id")
+        .eq("profile_id", me.id)
+        .single();
+
+      if (existing) {
+        await supabase.from("student_profiles").update({
+          english_level: result.level,
+          job: profileData.job,
+          interests: profileData.interests,
+          learning_goals: profileData.learning_goals,
+          test_score: result.score,
+          test_answers: { answers, questions: QUESTIONS.map((q) => q.q) },
+        }).eq("profile_id", me.id);
+      } else {
+        await supabase.from("student_profiles").insert({
+          profile_id: me.id,
+          english_level: result.level,
+          job: profileData.job,
+          interests: profileData.interests,
+          learning_goals: profileData.learning_goals,
+          test_score: result.score,
+          test_answers: { answers, questions: QUESTIONS.map((q) => q.q) },
+          lessons_remaining: 0,
+          preferred_session_duration: 50,
+        });
+      }
+
+      await supabase.from("profiles").update({
         full_name: profileData.full_name || me.full_name,
-        english_level: result.level,
-        job: profileData.job,
-        interests: profileData.interests,
-        learning_goals: profileData.learning_goals,
-        test_score: result.score,
-        test_answers: { answers, questions: QUESTIONS.map(q => q.q) },
-        lessons_remaining: 0,
-        preferred_session_duration: 50
-      });
+        english_level_assessment_completed: true,
+      }).eq("id", me.id);
 
-      // Mark English level assessment as completed on User record (CRITICAL: wait for completion)
-      await base44.auth.updateMe({
-        english_level_assessment_completed: true
-      });
-
-      console.log('[PlacementTest] Assessment completed and saved - navigating to StudentDashboard');
-
-      // Use navigate (which respects auth state) instead of hard reload
-      // This gives the session time to update before RoleGuard re-checks
       navigate(createPageUrl("StudentDashboard"));
     } catch (error) {
-      console.error('[PlacementTest] Error saving profile:', error);
+      console.error("[PlacementTest] Error saving profile:", error);
       setSaving(false);
     }
   };

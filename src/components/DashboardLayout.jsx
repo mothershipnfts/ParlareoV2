@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { useAuth } from "@/lib/AuthContext";
 import { createPageUrl } from "@/utils";
 import { GraduationCap, LogOut, Menu, X } from "lucide-react";
 
@@ -23,6 +23,7 @@ export default function DashboardLayout({
   badge,
   children,
 }) {
+  const { logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const initials = user?.full_name
@@ -113,7 +114,7 @@ export default function DashboardLayout({
             </div>
           </div>
           <button
-            onClick={() => base44.auth.logout(createPageUrl("Home"))}
+            onClick={() => logout(createPageUrl("Home"))}
             className="flex items-center gap-3 w-full px-3 py-2 rounded-xl text-sm text-white/40 hover:text-white hover:bg-white/8 transition-all mt-1"
           >
             <LogOut className="w-4 h-4" />

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
+import { useAuth } from "@/lib/AuthContext";
 import RoleGuard from "@/components/RoleGuard";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Home, Users, Calendar, Video, Wallet, Loader2, UserCircle, MessageSquare } from "lucide-react";
@@ -32,11 +32,13 @@ export default function TeacherDashboard() {
   const urlBookingId = urlParams.get("bookingId");
   const [activeTab, setActiveTab] = useState(urlTab || "home");
 
+  const { user: authUser } = useAuth();
   useEffect(() => {
-    base44.auth.me()
-      .then(me => { setUser(me); setLoading(false); })
-      .catch(() => { setLoading(false); });
-  }, []);
+    if (authUser) {
+      setUser(authUser);
+    }
+    setLoading(false);
+  }, [authUser]);
 
   if (loading || !user) {
     return (

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
+import { useAuth } from "@/lib/AuthContext";
 import { createPageUrl } from "@/utils";
 import { motion } from "framer-motion";
 import { GraduationCap, ArrowRight, Globe, LogOut, LayoutDashboard } from "lucide-react";
@@ -18,12 +18,11 @@ export default function Home() {
   const [user, setUser] = useState(null);
 
 
+  const { user: authUser, isAuthenticated: authOk, logout, navigateToLogin } = useAuth();
   useEffect(() => {
-    base44.auth.isAuthenticated().then(auth => {
-      setIsAuth(auth);
-      if (auth) base44.auth.me().then(setUser);
-    });
-  }, []);
+    setIsAuth(authOk);
+    setUser(authUser);
+  }, [authOk, authUser]);
 
   const ROLE_HOME = { admin: "AdminDashboard", teacher: "TeacherDashboard", student: "StudentDashboard" };
 
@@ -59,7 +58,7 @@ export default function Home() {
                   <span className="hidden sm:inline">Dashboard</span>
                 </Button>
                 {/* Log Out */}
-                <Button variant="ghost" onClick={() => base44.auth.logout(createPageUrl("Home"))}
+                <Button variant="ghost" onClick={() => logout(createPageUrl("Home"))}
                   className="text-white/50 hover:text-white hover:bg-white/5 rounded-full gap-2 px-3">
                   <LogOut className="w-4 h-4" />
                   <span className="hidden sm:inline">Log Out</span>
@@ -67,15 +66,15 @@ export default function Home() {
               </>
             ) : (
               <>
-                <Button variant="ghost" onClick={() => base44.auth.redirectToLogin(window.location.href)}
+                <Button variant="ghost" onClick={() => navigateToLogin(window.location.href)}
                   className="text-white/70 hover:text-white hover:bg-white/5 rounded-full px-5">
                   Log In
                 </Button>
-                <Button onClick={() => base44.auth.redirectToLogin(createPageUrl("PlacementTest"))}
+                <Button onClick={() => navigate(createPageUrl("SignUp") + "?role=student")}
                   className="bg-white/10 border border-white/20 hover:bg-white/15 rounded-full px-5 text-white hidden sm:inline-flex">
                   Sign Up as Student
                 </Button>
-                <Button onClick={() => base44.auth.redirectToLogin(createPageUrl("TeacherSignup"))}
+                <Button onClick={() => navigate(createPageUrl("SignUp") + "?role=teacher")}
                   className="bg-[#f97066] hover:bg-[#e8605a] rounded-full px-5">
                   Apply as Teacher
                 </Button>
@@ -117,11 +116,11 @@ export default function Home() {
                 </Button>
               ) : (
                 <>
-                  <Button size="lg" onClick={() => base44.auth.redirectToLogin(createPageUrl("PlacementTest"))}
+                  <Button size="lg" onClick={() => navigate(createPageUrl("SignUp") + "?role=student")}
                     className="bg-[#f97066] hover:bg-[#e8605a] rounded-full px-8 h-14 text-base font-semibold">
                     Sign Up as Student <ArrowRight className="w-5 h-5 ml-2" />
                   </Button>
-                  <Button size="lg" onClick={() => base44.auth.redirectToLogin(createPageUrl("TeacherSignup"))}
+                  <Button size="lg" onClick={() => navigate(createPageUrl("SignUp") + "?role=teacher")}
                     className="rounded-full px-8 h-14 text-base border-white/20 text-white bg-white/5 hover:bg-white/10 border">
                     Apply as Teacher
                   </Button>
@@ -196,11 +195,11 @@ export default function Home() {
                   </Button>
                 ) : (
                   <>
-                    <Button size="lg" onClick={() => base44.auth.redirectToLogin(createPageUrl("PlacementTest"))}
+                    <Button size="lg" onClick={() => navigate(createPageUrl("SignUp") + "?role=student")}
                       className="bg-white text-[#f97066] hover:bg-white/90 rounded-full px-10 h-14 font-semibold">
                       Sign Up as Student
                     </Button>
-                    <Button size="lg" onClick={() => base44.auth.redirectToLogin(createPageUrl("TeacherSignup"))}
+                    <Button size="lg" onClick={() => navigate(createPageUrl("SignUp") + "?role=teacher")}
                       className="bg-[#1a1b4b] hover:bg-[#2a2b5b] text-white rounded-full px-10 h-14 font-semibold">
                       Apply as Teacher
                     </Button>
