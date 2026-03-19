@@ -449,3 +449,18 @@ CREATE TRIGGER student_profiles_updated_at
 CREATE TRIGGER conversations_updated_at
   BEFORE UPDATE ON public.conversations
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- Create conversation when a booking is inserted
+CREATE OR REPLACE FUNCTION public.create_conversation_on_booking()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.student_id IS NOT NULL AND NEW.teacher_id IS NOT NULL AND NEW.student_id != NEW.teacher_id THEN
+    PERFORM public.get_or_create_conversation(NEW.student_id, NEW.teacher_id);
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER on_booking_created_create_conversation
+  AFTER INSERT ON public.bookings
+  FOR EACH ROW EXECUTE FUNCTION public.create_conversation_on_booking();

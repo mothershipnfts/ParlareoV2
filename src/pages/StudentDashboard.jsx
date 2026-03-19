@@ -46,7 +46,10 @@ export default function StudentDashboard() {
 
   const loadData = async () => {
     try {
-      if (!authUser?.id) return;
+      if (!authUser?.id) {
+        setLoading(false);
+        return;
+      }
       setUser(authUser);
 
       const { data: studentProfile } = await supabase

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/AuthContext";
 import { createPageUrl } from "@/utils";
 import { Video, Loader2, BookOpen, X, AlertTriangle, Clock, CheckCircle2, Info, Euro } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -116,17 +117,25 @@ export default function MyLessons() {
   const [resultMessage, setResultMessage] = useState(null);
   const [user, setUser] = useState(null);
 
-  useEffect(() => { loadData(); }, []);
+  const { user: authUser } = useAuth();
+
+  useEffect(() => {
+    loadData();
+  }, [authUser?.id]);
 
   const loadData = async () => {
-    const me = await base44.auth.me();
-    setUser(me);
-    const [allBookings, subs] = await Promise.all([
-      base44.entities.Booking.filter({ student_email: me.email }, '-date'),
-      base44.entities.StudentTeacherSubscription.filter({ student_email: me.email }),
-    ]);
-    setBookings(allBookings);
-    setSubscriptions(subs);
+    if (!authUser?.id) {
+      setLoading(false);
+      return;
+    }
+    setUser(authUser);
+    const { data: allBookings } = await supabase
+      .from("bookings")
+      .select("*")
+      .eq("student_id", authUser.id)
+      .order("date", { ascending: false });
+    setBookings(allBookings || []);
+    setSubscriptions([]);
     setLoading(false);
   };
 
@@ -134,22 +143,20 @@ export default function MyLessons() {
   const totalHeld = subscriptions.reduce((sum, s) => sum + (s.held_eur || 0), 0);
 
   const handleCancelConfirm = async (reason) => {
-    if (!cancelModal) return;
+    if (!cancelModal || !authUser?.id) return;
     setCancelling(true);
     try {
-      const res = await base44.functions.invoke("cancelLesson", {
-        booking_id: cancelModal.id,
-        reason,
-      });
-      const data = res.data;
-      setBookings(prev => prev.map(b => b.id === cancelModal.id ? { ...b, status: "canceled" } : b));
+      const { error } = await supabase
+        .from("bookings")
+        .update({ status: "canceled", notes: reason || "Cancelled by student" })
+        .eq("id", cancelModal.id)
+        .eq("student_id", authUser.id);
+      if (error) throw error;
+      setBookings((prev) => prev.map((b) => (b.id === cancelModal.id ? { ...b, status: "canceled" } : b)));
       setResultMessage({
-        type: data.outcome === "refunded" ? "success" : "warning",
-        text: data.message,
+        type: "success",
+        text: "Lesson cancelled successfully.",
       });
-      // Reload subscriptions to reflect updated balances
-      const subs = await base44.entities.StudentTeacherSubscription.filter({ student_email: user.email });
-      setSubscriptions(subs);
     } catch (err) {
       setResultMessage({ type: "error", text: "Failed to cancel lesson. Please try again." });
     }
